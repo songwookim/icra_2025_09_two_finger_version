@@ -42,6 +42,7 @@ from typing import Optional, Tuple, List, Any
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
 from geometry_msgs.msg import WrenchStamped, PoseStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32, Float32MultiArray, String, Bool
@@ -60,6 +61,12 @@ class DataLoggerNode(Node):
         self.declare_parameter('emg_topic', '/emg/raw')
         # EMG 저장 간격 (N행마다 한 번 기록)
         self.declare_parameter('emg_log_every_n', 1)
+        # EMG 기록 모드: 'hold'(마지막 값 유지) | 'blank'(업데이트 없으면 공란) — 기본을 'blank'로 설정
+        self.declare_parameter('emg_write_mode', 'blank')
+        # EMG 경고 지연시간(초). 초기 연결 지연으로 인한 오경고를 줄이기 위해 기본 2.0초 대기
+        self.declare_parameter('emg_warn_after_sec', 2.0)
+        # CSV flush 주기(틱). 1이면 매 행 flush, 10이면 10행마다 flush -> I/O 부하 감소로 콜백 스타베이션 방지
+        self.declare_parameter('csv_flush_every_n', 10)
         self.declare_parameter('start_immediately', True)
 
         self.rate_hz = float(self.get_parameter('rate_hz').get_parameter_value().double_value)
@@ -74,6 +81,28 @@ class DataLoggerNode(Node):
             self.emg_log_every_n = 1
         if self.emg_log_every_n <= 0:
             self.emg_log_every_n = 1
+        self.emg_write_mode = str(self.get_parameter('emg_write_mode').get_parameter_value().string_value).strip().lower()
+        if self.emg_write_mode not in {'hold','blank'}:
+            self.emg_write_mode = 'hold'
+        try:
+            self.emg_warn_after_sec = float(self.get_parameter('emg_warn_after_sec').get_parameter_value().double_value)
+        except Exception:
+            self.emg_warn_after_sec = 2.0
+        if self.emg_warn_after_sec < 0.0:
+            self.emg_warn_after_sec = 0.0
+        try:
+            self.csv_flush_every_n = int(self.get_parameter('csv_flush_every_n').get_parameter_value().integer_value)
+        except Exception:
+            self.csv_flush_every_n = 10
+        if self.csv_flush_every_n <= 0:
+            self.csv_flush_every_n = 1
+        # Environment diagnostics
+        try:
+            dom = os.environ.get('ROS_DOMAIN_ID', '(unset)')
+            rmw = os.environ.get('RMW_IMPLEMENTATION', '(default)')
+            self.get_logger().info(f"Env: ROS_DOMAIN_ID={dom}, RMW_IMPLEMENTATION={rmw}, emg_topic='{self.emg_topic}'")
+        except Exception:
+            pass
 
         # State holders (latest)
         self._force: List[Optional[Tuple[float,float,float,float,float,float,int,int]]] = [None, None, None]
@@ -82,6 +111,7 @@ class DataLoggerNode(Node):
         self._emg: Optional[Tuple[List[float],int,int]] = None
         self._emg_recv_count: int = 0
         self._emg_warned: bool = False
+        self._emg_last_written_count: int = 0
         self._ee: Optional[Tuple[float,float,float,int,int]] = None
         self._ee_recv_count: int = 0
         self._ee_warned: bool = False
@@ -90,6 +120,7 @@ class DataLoggerNode(Node):
 
         # Logging state
         self._logging_active = self.start_immediately
+        self._flush_counter = 0
 
         # Publisher: logging active state
         self._state_pub = self.create_publisher(Bool, '/data_logger/logging_active', 10)
@@ -193,6 +224,8 @@ class DataLoggerNode(Node):
             # reset EMG schedule counter when starting a new file
             try:
                 self._emg_log_counter = 0
+                # Force EMG to be considered "updated" for the first eligible row
+                self._emg_last_written_count = -1
             except Exception:
                 pass
             header = ['t_sec','t_nanosec']
@@ -327,16 +360,25 @@ class DataLoggerNode(Node):
         # Warn once if EMG is not received
         if not self._emg_warned:
             if self._emg_recv_count == 0:
-                ticks_for_1s = int(max(1.0, self.rate_hz))
+                ticks_for_delay = int(max(1.0, self.rate_hz * max(0.0, self.emg_warn_after_sec)))
                 if not hasattr(self, '_tick_count_emg'):
                     self._tick_count_emg = 0
                 self._tick_count_emg += 1
-                if self._tick_count_emg >= ticks_for_1s:
+                if self._tick_count_emg >= ticks_for_delay:
                     self.get_logger().warn(
                         f"EMG 미수신: emg_topic='{self.emg_topic}'. 토픽명이 맞는지, EMG 노드가 퍼블리시 중인지 확인하세요.")
                     self._emg_warned = True
         now_msg = self.get_clock().now().to_msg()
         row: List[str] = [str(now_msg.sec), str(now_msg.nanosec)]
+        # Optional: light debug every ~1s
+        try:
+            if not hasattr(self, '_dbg_tick'):
+                self._dbg_tick = 0
+            self._dbg_tick += 1
+            if self._dbg_tick % int(max(1.0, self.rate_hz)) == 0:
+                self.get_logger().debug(f'EMG recv count={self._emg_recv_count}, last_written={self._emg_last_written_count}')
+        except Exception:
+            pass
         # Force 2..3 (skip s1)
         for i in (1,2):
             f = self._force[i]
@@ -373,12 +415,19 @@ class DataLoggerNode(Node):
             if self._emg is None:
                 row += ['']*8 + ['','']
             else:
-                vals, ss, sn = self._emg
-                vals = (vals + [0.0]*8)[:8]
-                row += [f"{v:.6f}" for v in vals] + [str(ss), str(sn)]
+                # 업데이트 여부 확인: _emg_recv_count 변화가 없으면 이전 값 반복 방지 옵션
+                updated = (self._emg_recv_count != self._emg_last_written_count)
+                if (self.emg_write_mode == 'blank') and (not updated):
+                    row += ['']*8 + ['','']
+                else:
+                    vals, ss, sn = self._emg
+                    vals = (vals + [0.0]*8)[:8]
+                    row += [f"{v:.6f}" for v in vals] + [str(ss), str(sn)]
+                    self._emg_last_written_count = self._emg_recv_count
         try:
             self._csv_writer.writerow(row)
-            if self._csv_fp:
+            self._flush_counter += 1
+            if self._csv_fp and (self._flush_counter % self.csv_flush_every_n == 0):
                 self._csv_fp.flush()
         except Exception as e:
             self.get_logger().warn(f'CSV write 실패: {e}')
@@ -387,11 +436,14 @@ class DataLoggerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = DataLoggerNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         try:
             if rclpy.ok():

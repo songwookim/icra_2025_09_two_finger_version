@@ -8,18 +8,20 @@
 """
 
 import multiprocessing as mp
+import threading
+import queue
 from collections import deque
 import time
 import os
 
 import rclpy
 from rclpy.node import Node
+from rclpy.callback_groups import ReentrantCallbackGroup  # type: ignore
+from rclpy.executors import MultiThreadedExecutor  # type: ignore
+from rcl_interfaces.msg import ParameterDescriptor  # type: ignore
 from std_msgs.msg import Float32MultiArray, MultiArrayDimension, String
 
 from pyomyo import Myo, emg_mode  # type: ignore
-import matplotlib.pyplot as plt  # type: ignore
-from matplotlib import animation  # type: ignore
-from matplotlib.cm import get_cmap  # type: ignore
 
 EMG_CHANNELS = 8
 QUEUE_MAX = 2048
@@ -54,23 +56,37 @@ def emg_worker(q: mp.Queue):
 class EMGNode(Node):
     def __init__(self):
         super().__init__('emg_node')
-        self.declare_parameter('publish_rate_hz', 20.0)
-        self.declare_parameter('enable_plot', True)  # backwards-compat
-        self.declare_parameter('plot_mode', '')      # '', 'on', 'off', 'auto'
+        # Parameters
+        self.declare_parameter('publish_rate_hz', 100.0)
+        self.declare_parameter('enable_plot', False)  # 기본 비활성화 (Gdk 경고 회피)
+        # 문자열/불리언 모두 허용 (동적 타이핑)
+        self.declare_parameter('plot_mode', 'off', ParameterDescriptor(dynamic_typing=True))  # 'on','off','auto' 또는 bool
         self.declare_parameter('plot_animation_interval_ms', 10)
+        self.declare_parameter('log_publish_debug', False)  # 퍼블리시 값 로그 토글
         self.rate = self.get_parameter('publish_rate_hz').get_parameter_value().double_value
         # Plot mode resolution (plot_mode overrides enable_plot if provided)
         self.enable_plot = self.get_parameter('enable_plot').get_parameter_value().bool_value
-        mode = str(self.get_parameter('plot_mode').get_parameter_value().string_value).strip().lower()
+        # 안전 파싱: bool 또는 문자열 모두 처리
+        _pm_val = self.get_parameter('plot_mode').value
+        if isinstance(_pm_val, bool):
+            mode = 'on' if _pm_val else 'off'
+        else:
+            try:
+                mode = str(_pm_val).strip().lower()
+            except Exception:
+                mode = 'off'
         self.anim_interval_ms = int(self.get_parameter('plot_animation_interval_ms').get_parameter_value().integer_value)
-        if mode:
-            if mode == 'on':
-                self.enable_plot = True
-            elif mode == 'off':
-                self.enable_plot = False
-            elif mode == 'auto':
-                # auto: 디스플레이가 없으면 비활성화
-                self.enable_plot = bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+        if mode == 'on':
+            self.enable_plot = True
+        elif mode == 'off':
+            self.enable_plot = False
+        elif mode == 'auto':
+            # auto: 디스플레이가 없으면 비활성화
+            self.enable_plot = bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+
+        # Callback groups: 퍼블리시 타이머와 GUI 펌프를 분리하여 블로킹 방지
+        self.cb_pub = ReentrantCallbackGroup()
+        self.cb_gui = ReentrantCallbackGroup()
 
         # Publisher
         self.pub = self.create_publisher(Float32MultiArray, '/emg/raw', 10)
@@ -86,38 +102,68 @@ class EMGNode(Node):
         self.last_sample = [0.0] * EMG_CHANNELS
         self._i = 0
 
+        # Background reader thread drains queue and updates last_sample
+        self._stop_reader = False
+        self.reader = threading.Thread(target=self._reader_loop, daemon=True)
+        self.reader.start()
+
         if self.enable_plot:
             self._init_plot()
 
-        self.timer = self.create_timer(1.0 / self.rate, self.on_timer)
-        self.get_logger().info(f'EMGNode 시작 (rate={self.rate:.1f}Hz, plot={self.enable_plot})')
+        # 주기 퍼블리시 타이머 (퍼블리시 전용 콜백 그룹)
+        self.timer = self.create_timer(1.0 / self.rate, self.on_timer, callback_group=self.cb_pub)
+        try:
+            dom = os.environ.get('ROS_DOMAIN_ID', '(unset)')
+            rmw = os.environ.get('RMW_IMPLEMENTATION', '(default)')
+            self.get_logger().info(f'EMGNode 시작 (rate={self.rate:.1f}Hz, plot={self.enable_plot}, ROS_DOMAIN_ID={dom}, RMW={rmw})')
+        except Exception:
+            self.get_logger().info(f'EMGNode 시작 (rate={self.rate:.1f}Hz, plot={self.enable_plot})')
 
-    def _drain_latest(self):
-        latest = None
-        # empty() 체크 -> 최신만 유지
-        while not self.q.empty():
-            latest = self.q.get()
-        return latest
+    def _reader_loop(self):
+        # Continuously drain queue and keep only the latest sample
+        while not self._stop_reader:
+            try:
+                # Wait for at least one sample (short timeout to allow clean shutdown)
+                sample = self.q.get(timeout=0.1)
+                # Flush remaining quickly to keep the newest
+                while True:
+                    try:
+                        sample = self.q.get_nowait()
+                    except queue.Empty:
+                        break
+                # Convert and assign
+                try:
+                    self.last_sample = [float(x) for x in list(sample)[:EMG_CHANNELS]]
+                except (TypeError, ValueError):
+                    # ignore malformed
+                    pass
+            except queue.Empty:
+                # no data; loop again
+                continue
 
     def on_timer(self):
         self._i += 1
-        s = self._drain_latest()
-        if s is not None:
-            # EMG 라이브러리가 int 튜플을 줄 수 있으므로 float32 배열 요구사항 충족 위해 변환
-            try:
-                self.last_sample = [float(x) for x in list(s)[:EMG_CHANNELS]]
-            except (TypeError, ValueError):
-                # 잘못된 샘플이면 이전 값 유지
-                pass
         msg = Float32MultiArray()
         # stride: 1차원에서는 전체 요소 수
         msg.layout.dim = [MultiArrayDimension(label='channel', size=EMG_CHANNELS, stride=EMG_CHANNELS)]
         msg.data = self.last_sample  # 이미 float 리스트
         self.pub.publish(msg)
-        self.get_logger().info('pub ' + ', '.join(f'{v:.1f}' for v in self.last_sample))
+        if self.get_parameter('log_publish_debug').get_parameter_value().bool_value:
+            self.get_logger().debug('pub ' + ', '.join(f'{v:.1f}' for v in self.last_sample))
 
     # 플롯 초기화
     def _init_plot(self):
+        # 지연 임포트: 필요할 때만 matplotlib 로드 (GTK/Gdk 경고 회피)
+        import matplotlib
+        # headless 환경에서는 Agg 사용
+        if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+            try:
+                matplotlib.use('Agg', force=True)
+            except Exception:
+                pass
+        import matplotlib.pyplot as plt  # type: ignore
+        from matplotlib import animation  # type: ignore
+        from matplotlib.cm import get_cmap  # type: ignore
         self.buf = [deque(maxlen=PLOT_HISTORY) for _ in range(EMG_CHANNELS)]
         plt.rcParams['figure.figsize'] = (5, 9)
         fig, axs = plt.subplots(EMG_CHANNELS, 1, sharex=True)
@@ -145,15 +191,10 @@ class EMGNode(Node):
         self.fig = fig
 
         def animate(_frame):
-            # 새 샘플 모두 수집 -> 버퍼 기록
-            got = True
-            while got:
-                latest = self._drain_latest()
-                if latest is None:
-                    got = False
-                else:
-                    for ch in range(EMG_CHANNELS):
-                        self.buf[ch].append(latest[ch])
+            # Append the latest published sample (reader thread keeps it fresh)
+            s = self.last_sample
+            for ch in range(EMG_CHANNELS):
+                self.buf[ch].append(s[ch])
             # 갱신
             for ch in range(EMG_CHANNELS):
                 data = list(self.buf[ch])
@@ -186,13 +227,25 @@ class EMGNode(Node):
         except Exception:
             pass
 
-        # GUI 이벤트 펌프 (ROS 스핀과 병행)
+        # GUI 이벤트 펌프 (ROS 스핀과 병행). Non-blocking으로 동작하도록 flush_events/ pause(0) 사용
+        def _gui_tick():
+            try:
+                # 가능한 경우 flush_events가 더 짧음
+                if hasattr(self.fig.canvas, 'flush_events'):
+                    self.fig.canvas.flush_events()
+                else:
+                    plt.pause(0)
+            except Exception:
+                pass
+
         pump_dt = max(0.005, float(self.anim_interval_ms) / 1000.0)
-        self.gui_timer = self.create_timer(pump_dt, lambda: plt.pause(0.001))
+        self.gui_timer = self.create_timer(pump_dt, _gui_tick, callback_group=self.cb_gui)
         plt.ion()
         self.fig.show()
 
     def destroy_node(self):  # type: ignore
+        self._stop_reader = True
+        # No join needed for daemon thread; give it a moment by draining exception handling on shutdown
         if hasattr(self, 'proc') and self.proc.is_alive():
             self.proc.terminate()
         return super().destroy_node()
@@ -202,7 +255,10 @@ def main():
     rclpy.init()
     node = EMGNode()
     try:
-        rclpy.spin(node)
+        # 멀티스레드 실행기로 GUI 타이머와 퍼블리시 타이머가 서로 블로킹하지 않도록 함
+        executor = MultiThreadedExecutor(num_threads=2)
+        executor.add_node(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     node.destroy_node()

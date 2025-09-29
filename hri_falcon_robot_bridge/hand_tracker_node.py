@@ -216,6 +216,9 @@ class HandTrackerNode(Node):
         # Optional EE pose topic (to display or log end-effector pose)
         # 기본 동작: /ee_pose 로 계속 퍼블리시
         self.declare_parameter('ee_pose_topic', '/ee_pose')
+        # 추가: MF / TH 각 EE 토픽 병행 퍼블리시를 위한 토픽명
+        self.declare_parameter('ee_pose_topic_mf', '/ee_pose_mf')
+        self.declare_parameter('ee_pose_topic_th', '/ee_pose_th')
         # EE pose publish options
         self.declare_parameter('ee_pose_publish_enabled', True)
         self.declare_parameter('ee_pose_frame_id', 'camera_color_optical_frame')
@@ -226,6 +229,8 @@ class HandTrackerNode(Node):
         # MuJoCo에서 EE 위치를 뽑을 대상 (site 우선, 없으면 body)
         self.declare_parameter('ee_pose_mj_site', 'MFtip')
         self.declare_parameter('ee_pose_mj_body', '')
+        # 추가: THtip 별도 site 지원
+        self.declare_parameter('ee_pose_mj_site_th', 'THtip')
 
         # read params
         self.width = int(self.get_parameter('width').get_parameter_value().integer_value)
@@ -243,12 +248,15 @@ class HandTrackerNode(Node):
         self.run_mujoco = bool(self.get_parameter('run_mujoco').get_parameter_value().bool_value)
         self.mujoco_model_path = str(self.get_parameter('mujoco_model_path').get_parameter_value().string_value)
         self.ee_pose_topic = str(self.get_parameter('ee_pose_topic').get_parameter_value().string_value)
+        self.ee_pose_topic_mf = str(self.get_parameter('ee_pose_topic_mf').get_parameter_value().string_value)
+        self.ee_pose_topic_th = str(self.get_parameter('ee_pose_topic_th').get_parameter_value().string_value)
         self.ee_pose_publish_enabled = bool(self.get_parameter('ee_pose_publish_enabled').get_parameter_value().bool_value)
         self.ee_pose_frame_id = str(self.get_parameter('ee_pose_frame_id').get_parameter_value().string_value)
         self.ee_pose_mode = str(self.get_parameter('ee_pose_mode').get_parameter_value().string_value).lower().strip()
         self.ee_pose_source = str(self.get_parameter('ee_pose_source').get_parameter_value().string_value).lower().strip()
         self.ee_pose_mj_site = str(self.get_parameter('ee_pose_mj_site').get_parameter_value().string_value)
         self.ee_pose_mj_body = str(self.get_parameter('ee_pose_mj_body').get_parameter_value().string_value)
+        self.ee_pose_mj_site_th = str(self.get_parameter('ee_pose_mj_site_th').get_parameter_value().string_value)
         if not self.mujoco_model_path:
             self.mujoco_model_path = '/home/songwoo/Desktop/work_dir/realsense_hand_retargetting/universal_robots_ur5e_with_dclaw/dclaw_two_finger/dclaw3xh.xml'
 
@@ -281,6 +289,8 @@ class HandTrackerNode(Node):
         # EE pose publish/subscribe
         self._ee_pose = None
         self.ee_pose_pub = None
+        self.ee_pose_pub_mf = None
+        self.ee_pose_pub_th = None
         if self.ee_pose_topic:
             # 퍼블리시를 원하면 퍼블리셔 생성
             if self.ee_pose_publish_enabled:
@@ -294,6 +304,19 @@ class HandTrackerNode(Node):
                 self.create_subscription(PoseStamped, self.ee_pose_topic, self._on_ee_pose, 10)
             except Exception as e:
                 self.get_logger().warn(f"EE pose subscribe 실패: {e}")
+        # Dual publishers for MF / TH (optional)
+        try:
+            if self.ee_pose_publish_enabled and self.ee_pose_topic_mf:
+                self.ee_pose_pub_mf = self.create_publisher(PoseStamped, self.ee_pose_topic_mf, 10)
+                self.get_logger().info(f"EE Pose 퍼블리시(MF): {self.ee_pose_topic_mf}")
+        except Exception as e:
+            self.get_logger().warn(f"EE pose(MF) publisher 생성 실패: {e}")
+        try:
+            if self.ee_pose_publish_enabled and self.ee_pose_topic_th:
+                self.ee_pose_pub_th = self.create_publisher(PoseStamped, self.ee_pose_topic_th, 10)
+                self.get_logger().info(f"EE Pose 퍼블리시(TH): {self.ee_pose_topic_th}")
+        except Exception as e:
+            self.get_logger().warn(f"EE pose(TH) publisher 생성 실패: {e}")
         # MuJoCo EE 식별자
         self._ee_site_id = None
         self._ee_body_id = None
@@ -378,6 +401,15 @@ class HandTrackerNode(Node):
                             self.get_logger().info(f"[EE] MuJoCo site 사용: {self.ee_pose_mj_site} (id={self._ee_site_id})")
                         else:
                             self.get_logger().warn(f"[EE] MuJoCo site 미발견: {self.ee_pose_mj_site}")
+                    # 추가: THtip site 식별
+                    self._ee_site_id_th = None
+                    if self.ee_pose_mj_site_th:
+                        sid_th = mj.mj_name2id(self._mj_model, mj.mjtObj.mjOBJ_SITE, self.ee_pose_mj_site_th)  # type: ignore[attr-defined]
+                        if sid_th >= 0:
+                            self._ee_site_id_th = int(sid_th)
+                            self.get_logger().info(f"[EE] MuJoCo site 사용(TH): {self.ee_pose_mj_site_th} (id={self._ee_site_id_th})")
+                        else:
+                            self.get_logger().warn(f"[EE] MuJoCo site 미발견(TH): {self.ee_pose_mj_site_th}")
                     if self._ee_site_id is None and self.ee_pose_mj_body:
                         bid = mj.mj_name2id(self._mj_model, mj.mjtObj.mjOBJ_BODY, self.ee_pose_mj_body)  # type: ignore[attr-defined]
                         if bid >= 0:
@@ -728,6 +760,51 @@ class HandTrackerNode(Node):
                                                 pass
                                             # Overlay 표시용 내부 상태도 업데이트
                                             self._ee_pose = (px, py, pz)
+                                except Exception:
+                                    pass
+                                # 추가: MFtip / THtip 동시 퍼블리시 (MuJoCo 기준)
+                                try:
+                                    if self.ee_pose_publish_enabled and self.ee_pose_source == 'mujoco':
+                                        now = self.get_clock().now().to_msg()
+                                        # MF: 설정된 site/body 사용
+                                        if self.ee_pose_pub_mf is not None:
+                                            px_mf = py_mf = pz_mf = None
+                                            if self._ee_site_id is not None:
+                                                try:
+                                                    p = self._mj_data.site_xpos[self._ee_site_id]
+                                                    px_mf, py_mf, pz_mf = float(p[0]), float(p[1]), float(p[2])
+                                                except Exception:
+                                                    pass
+                                            elif self._ee_body_id is not None:
+                                                try:
+                                                    p = self._mj_data.xpos[self._ee_body_id]
+                                                    px_mf, py_mf, pz_mf = float(p[0]), float(p[1]), float(p[2])
+                                                except Exception:
+                                                    pass
+                                            if px_mf is not None:
+                                                m = PoseStamped()
+                                                m.header.stamp = now
+                                                m.header.frame_id = self.ee_pose_frame_id
+                                                m.pose.position.x = px_mf; m.pose.position.y = py_mf; m.pose.position.z = pz_mf
+                                                m.pose.orientation.w = 1.0
+                                                try:
+                                                    self.ee_pose_pub_mf.publish(m)
+                                                except Exception:
+                                                    pass
+                                        # TH: 별도 site 사용
+                                        if self.ee_pose_pub_th is not None and getattr(self, '_ee_site_id_th', None) is not None:
+                                            try:
+                                                p = self._mj_data.site_xpos[self._ee_site_id_th]
+                                                m2 = PoseStamped()
+                                                m2.header.stamp = now
+                                                m2.header.frame_id = self.ee_pose_frame_id
+                                                m2.pose.position.x = float(p[0])
+                                                m2.pose.position.y = float(p[1])
+                                                m2.pose.position.z = float(p[2])
+                                                m2.pose.orientation.w = 1.0
+                                                self.ee_pose_pub_th.publish(m2)
+                                            except Exception:
+                                                pass
                                 except Exception:
                                     pass
                             except Exception as e:

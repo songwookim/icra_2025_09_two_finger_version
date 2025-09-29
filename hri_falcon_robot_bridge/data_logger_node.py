@@ -56,6 +56,9 @@ class DataLoggerNode(Node):
         self.declare_parameter('rate_hz', 100.0)
         self.declare_parameter('csv_dir', '')
         self.declare_parameter('ee_pose_topic', '/ee_pose')
+        # 추가: 양손가락 EE 토픽 (MF/TH) 병행 구독 지원
+        self.declare_parameter('ee_pose_topic_mf', '/ee_pose_mf')
+        self.declare_parameter('ee_pose_topic_th', '/ee_pose_th')
         self.declare_parameter('ee_pose_odometry_topic', '')
         # EMG topic을 파라미터로 노출(기본값은 /emg/raw)
         self.declare_parameter('emg_topic', '/emg/raw')
@@ -72,6 +75,8 @@ class DataLoggerNode(Node):
         self.rate_hz = float(self.get_parameter('rate_hz').get_parameter_value().double_value)
         self.csv_dir_param = str(self.get_parameter('csv_dir').get_parameter_value().string_value)
         self.ee_pose_topic = str(self.get_parameter('ee_pose_topic').get_parameter_value().string_value)
+        self.ee_pose_topic_mf = str(self.get_parameter('ee_pose_topic_mf').get_parameter_value().string_value)
+        self.ee_pose_topic_th = str(self.get_parameter('ee_pose_topic_th').get_parameter_value().string_value)
         self.ee_pose_odom_topic = str(self.get_parameter('ee_pose_odometry_topic').get_parameter_value().string_value)
         self.start_immediately = bool(self.get_parameter('start_immediately').get_parameter_value().bool_value)
         self.emg_topic = str(self.get_parameter('emg_topic').get_parameter_value().string_value)
@@ -113,6 +118,8 @@ class DataLoggerNode(Node):
         self._emg_warned: bool = False
         self._emg_last_written_count: int = 0
         self._ee: Optional[Tuple[float,float,float,int,int]] = None
+        self._ee_mf: Optional[Tuple[float,float,float,int,int]] = None
+        self._ee_th: Optional[Tuple[float,float,float,int,int]] = None
         self._ee_recv_count: int = 0
         self._ee_warned: bool = False
         # EMG 저장 주기 카운터
@@ -148,6 +155,18 @@ class DataLoggerNode(Node):
                 self.get_logger().info(f"EE Pose 구독(PoseStamped): {self.ee_pose_topic}")
             except Exception as e:
                 self.get_logger().warn(f"EE pose topic(PoseStamped) subscribe 실패: {e}")
+        if self.ee_pose_topic_mf:
+            try:
+                self.create_subscription(PoseStamped, self.ee_pose_topic_mf, self._on_ee_pose_mf, 20)
+                self.get_logger().info(f"EE Pose 구독(MF): {self.ee_pose_topic_mf}")
+            except Exception as e:
+                self.get_logger().warn(f"EE pose(MF) subscribe 실패: {e}")
+        if self.ee_pose_topic_th:
+            try:
+                self.create_subscription(PoseStamped, self.ee_pose_topic_th, self._on_ee_pose_th, 20)
+                self.get_logger().info(f"EE Pose 구독(TH): {self.ee_pose_topic_th}")
+            except Exception as e:
+                self.get_logger().warn(f"EE pose(TH) subscribe 실패: {e}")
         if self.ee_pose_odom_topic:
             try:
                 self.create_subscription(Odometry, self.ee_pose_odom_topic, self._on_ee_odom, 20)
@@ -242,6 +261,9 @@ class DataLoggerNode(Node):
                 's3_stamp_sec', 's3_stamp_nsec'
             ]
             header += ['ee_px','ee_py','ee_pz','ee_stamp_sec','ee_stamp_nsec']
+            # 추가: MF / TH EE 위치
+            header += ['ee_mf_px','ee_mf_py','ee_mf_pz','ee_mf_stamp_sec','ee_mf_stamp_nsec']
+            header += ['ee_th_px','ee_th_py','ee_th_pz','ee_th_stamp_sec','ee_th_stamp_nsec']
             header += ['deform_circ','deform_circ_stamp_sec','deform_circ_stamp_nsec']
             header += ['deform_ecc','deform_ecc_stamp_sec','deform_ecc_stamp_nsec']
             header += [f'emg_ch{i+1}' for i in range(8)] + ['emg_stamp_sec','emg_stamp_nsec']
@@ -326,6 +348,26 @@ class DataLoggerNode(Node):
         except Exception:
             pass
 
+    def _on_ee_pose_mf(self, msg: PoseStamped) -> None:
+        try:
+            p = msg.pose.position
+            self._ee_mf = (
+                float(p.x), float(p.y), float(p.z),
+                int(msg.header.stamp.sec), int(msg.header.stamp.nanosec)
+            )
+        except Exception:
+            pass
+
+    def _on_ee_pose_th(self, msg: PoseStamped) -> None:
+        try:
+            p = msg.pose.position
+            self._ee_th = (
+                float(p.x), float(p.y), float(p.z),
+                int(msg.header.stamp.sec), int(msg.header.stamp.nanosec)
+            )
+        except Exception:
+            pass
+
     def _on_ee_odom(self, msg: Odometry) -> None:
         try:
             p = msg.pose.pose.position
@@ -393,6 +435,18 @@ class DataLoggerNode(Node):
             row += ['','','','','']
         else:
             px,py,pz,ss,sn = self._ee
+            row += [f"{px:.6f}", f"{py:.6f}", f"{pz:.6f}", str(ss), str(sn)]
+        # EE pose (MF)
+        if self._ee_mf is None:
+            row += ['','','','','']
+        else:
+            px,py,pz,ss,sn = self._ee_mf
+            row += [f"{px:.6f}", f"{py:.6f}", f"{pz:.6f}", str(ss), str(sn)]
+        # EE pose (TH)
+        if self._ee_th is None:
+            row += ['','','','','']
+        else:
+            px,py,pz,ss,sn = self._ee_th
             row += [f"{px:.6f}", f"{py:.6f}", f"{pz:.6f}", str(ss), str(sn)]
         # Deform circ
         if self._deform_circ is None:

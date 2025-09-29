@@ -62,6 +62,8 @@ class EMGNode(Node):
         # 문자열/불리언 모두 허용 (동적 타이핑)
         self.declare_parameter('plot_mode', 'off', ParameterDescriptor(dynamic_typing=True))  # 'on','off','auto' 또는 bool
         self.declare_parameter('plot_animation_interval_ms', 10)
+        # 백엔드 선택(고급): '', 'Qt5Agg', 'TkAgg', 'Agg' 등
+        self.declare_parameter('plot_backend', '')
         self.declare_parameter('log_publish_debug', False)  # 퍼블리시 값 로그 토글
         self.rate = self.get_parameter('publish_rate_hz').get_parameter_value().double_value
         # Plot mode resolution (plot_mode overrides enable_plot if provided)
@@ -155,14 +157,47 @@ class EMGNode(Node):
     def _init_plot(self):
         # 지연 임포트: 필요할 때만 matplotlib 로드 (GTK/Gdk 경고 회피)
         import matplotlib
-        # headless 환경에서는 Agg 사용
-        if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+        # 백엔드 결정
+        want_display = bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+        backend_param = str(self.get_parameter('plot_backend').get_parameter_value().string_value).strip()
+        backend_tried = None
+        try:
+            if not want_display:
+                matplotlib.use('Agg', force=True)
+                backend_tried = 'Agg'
+            else:
+                if backend_param:
+                    matplotlib.use(backend_param, force=True)
+                    backend_tried = backend_param
+                else:
+                    # 우선순위: Qt5Agg → TkAgg → Agg
+                    for cand in ('Qt5Agg', 'TkAgg', 'Agg'):
+                        try:
+                            matplotlib.use(cand, force=True)
+                            backend_tried = cand
+                            break
+                        except Exception:
+                            continue
+        except Exception:
+            # 최후 수단
             try:
                 matplotlib.use('Agg', force=True)
+                backend_tried = 'Agg'
             except Exception:
                 pass
+        try:
+            self.get_logger().info(f"Matplotlib backend: {matplotlib.get_backend()} (requested='{backend_param or 'auto'}', tried='{backend_tried}')")
+        except Exception:
+            pass
+        # 환경 주의: Qt 백엔드 + offscreen이면 검은 화면이 될 수 있음
+        try:
+            be = str(matplotlib.get_backend()).lower()
+            qpa = os.environ.get('QT_QPA_PLATFORM', '').lower()
+            if ('qt' in be) and (qpa == 'offscreen'):
+                self.get_logger().warn("QT_QPA_PLATFORM=offscreen 상태입니다. 플롯 표시를 위해 `export QT_QPA_PLATFORM=xcb` 권장")
+        except Exception:
+            pass
         import matplotlib.pyplot as plt  # type: ignore
-        from matplotlib import animation  # type: ignore
         from matplotlib.cm import get_cmap  # type: ignore
         self.buf = [deque(maxlen=PLOT_HISTORY) for _ in range(EMG_CHANNELS)]
         plt.rcParams['figure.figsize'] = (5, 9)
@@ -190,25 +225,39 @@ class EMGNode(Node):
         fig.tight_layout()
         self.fig = fig
 
-        def animate(_frame):
-            # Append the latest published sample (reader thread keeps it fresh)
+        # 갱신 함수: 최신 샘플을 라인에 반영
+        def _update_lines():
             s = self.last_sample
             for ch in range(EMG_CHANNELS):
                 self.buf[ch].append(s[ch])
-            # 갱신
             for ch in range(EMG_CHANNELS):
                 data = list(self.buf[ch])
                 if not data:
                     continue
                 x = list(range(len(data)))
                 self.lines[ch].set_data(x, data)
-                m = max(10, max(data))
+                vmax = max(10.0, max(data))
                 ax = self.lines[ch].axes
-                ax.set_ylim(0, m)
+                ax.set_ylim(0, vmax)
                 ax.set_xlim(max(0, len(data) - PLOT_HISTORY), len(data))
-            return self.lines
-
-        self.ani = animation.FuncAnimation(self.fig, animate, interval=max(1, self.anim_interval_ms), blit=False)
+            try:
+                self.fig.canvas.draw_idle()
+            except Exception:
+                pass
+        self._mpl_manual_update = _update_lines
+        # 가능하면 GUI 백엔드 타이머를 사용하여 메인 스레드에서 갱신
+        self._canvas_timer_started = False
+        try:
+            be = __import__('matplotlib').get_backend().lower()
+            if any(k in be for k in ('qt', 'tk', 'wx')):
+                t = self.fig.canvas.new_timer(interval=max(1, self.anim_interval_ms))
+                t.add_callback(self._mpl_manual_update)
+                t.start()
+                self._canvas_timer = t
+                self._canvas_timer_started = True
+                self.get_logger().info(f'GUI canvas timer started for backend={be}')
+        except Exception:
+            self._canvas_timer_started = False
         # 키 입력을 hand_tracker/key 로 포워딩
         def _on_mpl_key(evt):
             try:
@@ -227,21 +276,31 @@ class EMGNode(Node):
         except Exception:
             pass
 
-        # GUI 이벤트 펌프 (ROS 스핀과 병행). Non-blocking으로 동작하도록 flush_events/ pause(0) 사용
+        # GUI 이벤트 펌프 (ROS 스핀과 병행). 백엔드 타이머가 없는 경우에만 백업 경로로 동작
         def _gui_tick():
             try:
-                # 가능한 경우 flush_events가 더 짧음
-                if hasattr(self.fig.canvas, 'flush_events'):
-                    self.fig.canvas.flush_events()
-                else:
-                    plt.pause(0)
+                # 백엔드 GUI 타이머가 이미 갱신을 처리 중이면 건드리지 않음
+                if getattr(self, '_canvas_timer_started', False):
+                    return
+                # 수동 갱신 + draw (백업 경로)
+                if hasattr(self, '_mpl_manual_update'):
+                    self._mpl_manual_update()
+                try:
+                    self.fig.canvas.draw_idle()
+                except Exception:
+                    pass
+                # flush_events는 일부 백엔드에서만 필요
+                try:
+                    if hasattr(self.fig.canvas, 'flush_events'):
+                        self.fig.canvas.flush_events()
+                except Exception:
+                    pass
             except Exception:
                 pass
 
         pump_dt = max(0.005, float(self.anim_interval_ms) / 1000.0)
         self.gui_timer = self.create_timer(pump_dt, _gui_tick, callback_group=self.cb_gui)
-        plt.ion()
-        self.fig.show()
+        # 주: 창 생성/표시는 main()에서 plt.show(block=True)로 처리한다.
 
     def destroy_node(self):  # type: ignore
         self._stop_reader = True
@@ -254,15 +313,37 @@ class EMGNode(Node):
 def main():
     rclpy.init()
     node = EMGNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        # 멀티스레드 실행기로 GUI 타이머와 퍼블리시 타이머가 서로 블로킹하지 않도록 함
-        executor = MultiThreadedExecutor(num_threads=2)
-        executor.add_node(node)
-        executor.spin()
+        if getattr(node, 'enable_plot', False):
+            # GUI는 메인 스레드에서, ROS 스핀은 백그라운드 스레드에서
+            spin_thread = threading.Thread(target=executor.spin, daemon=True)
+            spin_thread.start()
+            try:
+                import matplotlib.pyplot as plt  # type: ignore
+                node.get_logger().info('Opening plot window (blocking show)')
+                plt.show(block=True)  # 메인 스레드에서 GUI 이벤트 루프 실행
+            except KeyboardInterrupt:
+                pass
+            finally:
+                try:
+                    executor.shutdown()
+                except Exception:
+                    pass
+        else:
+            executor.spin()
     except KeyboardInterrupt:
         pass
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

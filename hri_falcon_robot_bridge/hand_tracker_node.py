@@ -209,6 +209,7 @@ class HandTrackerNode(Node):
         # CSV
         self.declare_parameter('log_angles_csv_enable', False)
         self.declare_parameter('log_angles_csv_path', '')
+        # 시간 오버레이는 항상 표시하되 파일 저장은 하지 않음 (파라미터 제거)
         # MuJoCo options
         self.declare_parameter('run_mujoco', True)
         # 기본 경로: 사용자가 제공한 DClaw XML 경로를 기본값으로 설정
@@ -450,6 +451,8 @@ class HandTrackerNode(Node):
         self._csv_fp = None
         self._csv_writer = None
         self._csv_active = False
+        # 시간 기준 (로거 ON 시점). 파일 저장은 하지 않음
+        self._time_start = None  # (sec, nsec) when logger became active
         if self.log_angles_csv_enable:
             try:
                 if not self.log_angles_csv_path:
@@ -472,11 +475,21 @@ class HandTrackerNode(Node):
                 self.get_logger().error(f"CSV 파일 열기 실패: {e}")
 
     def _on_logger_state(self, msg: Bool) -> None:
+        # Follow data_logger active state for overlay elapsed time
         try:
-            self._logger_active = bool(msg.data)
+            active = bool(msg.data)
         except Exception:
-            self._logger_active = None
-        # (logger state only; no change to local CSV toggle here)
+            active = False
+        self._logger_active = active
+        if active:
+            try:
+                now = self.get_clock().now().to_msg()
+                self._time_start = (int(now.sec), int(now.nanosec))
+            except Exception:
+                self._time_start = None
+        else:
+            # reset baseline
+            self._time_start = None
 
     def _on_ee_pose(self, msg: PoseStamped) -> None:
         try:
@@ -826,6 +839,7 @@ class HandTrackerNode(Node):
                                 self._csv_fp.flush()
                         except Exception as e:
                             self.get_logger().warn(f"CSV 로그 실패: {e}")
+                    # 파일 저장은 하지 않음 (오버레이만 표시)
 
                     VISIBLE_IDX = {0,1,2,3,4,5,6,7,8,9,10,11,12}
                     VISIBLE_CONNS = [(a,b) for (a,b) in mp.solutions.hands.HAND_CONNECTIONS if a in VISIBLE_IDX and b in VISIBLE_IDX]  # type: ignore[attr-defined]
@@ -883,6 +897,17 @@ class HandTrackerNode(Node):
                     log_txt = f"DATA LOGGER (s): {log_state_txt}"
                     cv2.putText(img, log_txt, (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2, cv2.LINE_AA)
                     cv2.putText(img, log_txt, (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.55, lcolor, 1, cv2.LINE_AA)
+                    # Elapsed time since logger start (sec)
+                    try:
+                        if self._logger_active and self._time_start is not None:
+                            now = self.get_clock().now().to_msg()
+                            s0, n0 = self._time_start
+                            ds = int((int(now.sec) - int(s0)) + (int(now.nanosec) - int(n0)) / 1e9)
+                            t_txt = f"TIME: {ds}s"
+                            cv2.putText(img, t_txt, (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2, cv2.LINE_AA)
+                            cv2.putText(img, t_txt, (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (50, 200, 255), 1, cv2.LINE_AA)
+                    except Exception:
+                        pass
                     # EE pose (optional) on next line
                     try:
                         if getattr(self, '_ee_pose', None) is not None:
@@ -893,8 +918,8 @@ class HandTrackerNode(Node):
                             else:
                                 px,py,pz = self._ee_pose  # type: ignore[misc]
                                 ee_txt = f"EE: p=({px:+.3f},{py:+.3f},{pz:+.3f})"
-                            cv2.putText(img, ee_txt, (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 0, 0), 2, cv2.LINE_AA)
-                            cv2.putText(img, ee_txt, (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 50), 1, cv2.LINE_AA)
+                            cv2.putText(img, ee_txt, (10, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 0, 0), 2, cv2.LINE_AA)
+                            cv2.putText(img, ee_txt, (10, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 50), 1, cv2.LINE_AA)
                     except Exception:
                         pass
                     # Note: HAND CSV 상태는 s키로 제어하지 않으므로 별도 표시하지 않음

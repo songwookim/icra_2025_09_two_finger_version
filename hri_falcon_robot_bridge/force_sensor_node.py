@@ -52,7 +52,7 @@ class ForceSensorNode(Node):
         self.declare_parameter('publish_rate_hz', 1000.0)
         self.declare_parameter('use_mock', False)
         self.declare_parameter('config_path', 'config.yaml')  # currently unused
-        self.declare_parameter('csv_enable', True)
+        self.declare_parameter('csv_enable', False)
         self.declare_parameter('csv_dir', '')
 
         self.rate = self.get_parameter('publish_rate_hz').get_parameter_value().double_value

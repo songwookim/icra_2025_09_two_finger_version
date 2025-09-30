@@ -74,7 +74,8 @@ public:
     force_process_rate_hz_ = this->declare_parameter<double>("force_process_rate_hz", 200.0);
   // Safe mode & CSV params
   safe_mode_ = this->declare_parameter<bool>("safe_mode", true);
-  csv_enable_ = this->declare_parameter<bool>("csv_enable", true);
+  // 기본값을 false로 변경: Falcon 단독 CSV 저장은 사용하지 않음
+  csv_enable_ = this->declare_parameter<bool>("csv_enable", false);
   csv_dir_ = this->declare_parameter<std::string>("csv_dir", "");
 
     // Device init

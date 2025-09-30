@@ -6,14 +6,13 @@ Multi-topic synchronized CSV logger node.
 - Force sensors: `/force_sensor/s{2..3}/wrench` (geometry_msgs/WrenchStamped)  ← s1은 저장하지 않음
 - EMG: `/emg/raw` (std_msgs/Float32MultiArray)
 - Deformity metrics: `/deformity_tracker/circularity` & `/deformity_tracker/eccentricity` (std_msgs/Float32)
-  (Backward compat: also listens to legacy `/ball_tracker/circularity` if published)
 - End-effector pose: geometry_msgs/PoseStamped (ee_pose_topic) 또는 nav_msgs/Odometry (ee_pose_odometry_topic) 구독 지원 (optional)
 
 Control:
 - Subscribes to `/hand_tracker/key` (std_msgs/String). When message data == 's', toggles logging:
     - OFF -> ON: starts logging and opens a new CSV file
     - ON -> OFF: stops logging and closes the current CSV file
-- Parameter `start_immediately` (bool, default True) controls whether logging starts active.
+- Parameter `start_immediately` (bool, default False) controls whether logging starts active.
 - When inactive, timer still runs but no CSV rows are appended until first activation.
 
 Parameters:
@@ -70,7 +69,7 @@ class DataLoggerNode(Node):
         self.declare_parameter('emg_warn_after_sec', 2.0)
         # CSV flush 주기(틱). 1이면 매 행 flush, 10이면 10행마다 flush -> I/O 부하 감소로 콜백 스타베이션 방지
         self.declare_parameter('csv_flush_every_n', 10)
-        self.declare_parameter('start_immediately', True)
+        self.declare_parameter('start_immediately', False)
 
         self.rate_hz = float(self.get_parameter('rate_hz').get_parameter_value().double_value)
         self.csv_dir_param = str(self.get_parameter('csv_dir').get_parameter_value().string_value)
@@ -139,7 +138,6 @@ class DataLoggerNode(Node):
         # Deformity metrics
         self.create_subscription(Float32, '/deformity_tracker/circularity', self._on_deform_circ, 10)
         self.create_subscription(Float32, '/deformity_tracker/eccentricity', self._on_deform_ecc, 10)
-        self.create_subscription(Float32, '/ball_tracker/circularity', self._on_deform_circ, 10)  # legacy
 
         # EMG
         try:

@@ -6,13 +6,6 @@ RealSense 컬러 스트림 + HSV 마스킹 기반 변형(공/타원) 추적 노�
 - GUI (옵션) 시각화
 - 변형 지표(circularity / eccentricity)를 다른 노드들이 동기화 로깅 가능하도록 토픽 퍼블리시
 
-기존 ball_tracker_node.py 에 ellipse_eccentricity.py의 타원 피팅/이심률 로직을 통합
-변경 사항:
-  * 파일명: deformity_tracker_node.py
-  * 추가 출력: /deformity_tracker/circularity (std_msgs/Float32)
-                /deformity_tracker/eccentricity (std_msgs/Float32)
-  * 내부 계산: fitEllipse 가능시 eccentricity = sqrt(1 - (b/a)^2), aspect = b/a
-
 ROS2 파라미터
 - device_index (int, 기본 -1): 연결된 카메라 인덱스 선택(0,1,...)  -1이면 자동
 - serial_number (str): 특정 시리얼 카메라 선택(우선순위 높음)
@@ -31,7 +24,7 @@ import numpy as np
 import cv2
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Bool
 
 try:
     import pyrealsense2 as rs  # type: ignore
@@ -86,6 +79,13 @@ class DeformityTrackerNode(Node):
         self.declare_parameter('exclude_serials', '')
         self.declare_parameter('open_retry_count', 1)
         self.declare_parameter('open_retry_delay_sec', 0.4)
+        # 캡처 저장 옵션 (로거 활성 시 캡처 자동 저장)
+        self.declare_parameter('record_video_auto', True)
+        self.declare_parameter('video_dir', '')
+        self.declare_parameter('capture_mode', 'frames')  # 'frames' | 'video'
+        self.declare_parameter('frame_save_interval', 5)
+        self.declare_parameter('video_fourcc', 'XVID')
+        self.declare_parameter('video_fps', 0.0)  # 0이면 camera fps 사용
 
         self.width = int(self.get_parameter('width').get_parameter_value().integer_value)
         self.height = int(self.get_parameter('height').get_parameter_value().integer_value)
@@ -120,6 +120,28 @@ class DeformityTrackerNode(Node):
         self._csv_enabled = False
         self._csv_f = None
         self._csv_writer = None
+        # 이미지 캡처 상태
+        self.record_video_auto = bool(self.get_parameter('record_video_auto').get_parameter_value().bool_value)
+        self.video_dir = str(self.get_parameter('video_dir').get_parameter_value().string_value)
+        self.capture_mode = str(self.get_parameter('capture_mode').get_parameter_value().string_value).strip().lower() or 'frames'
+        if self.capture_mode not in {'frames','video'}:
+            self.get_logger().warn(f"[CAPTURE] unsupported mode '{self.capture_mode}', falling back to 'frames'")
+            self.capture_mode = 'frames'
+        try:
+            self.frame_save_interval = int(self.get_parameter('frame_save_interval').get_parameter_value().integer_value)
+        except Exception:
+            self.frame_save_interval = 5
+        if self.frame_save_interval <= 0:
+            self.frame_save_interval = 1
+        self.video_fourcc = str(self.get_parameter('video_fourcc').get_parameter_value().string_value).strip() or 'XVID'
+        try:
+            self.video_fps = float(self.get_parameter('video_fps').get_parameter_value().double_value)
+        except Exception:
+            self.video_fps = 0.0
+        self._recording = False
+        self._record_dir = None
+        self._frame_counter = 0
+        self._video_writer = None
 
         # FPS 측정
         self._fps_t = time.time()
@@ -131,8 +153,17 @@ class DeformityTrackerNode(Node):
         # Publishers (circularity + eccentricity)
         self.pub_circularity = self.create_publisher(Float32, '/deformity_tracker/circularity', 10)
         self.pub_eccentricity = self.create_publisher(Float32, '/deformity_tracker/eccentricity', 10)
+        # Follow data_logger logging state to control video recording automatically
+        self._logger_active = False
+        try:
+            self.create_subscription(Bool, '/data_logger/logging_active', self._on_logger_state, 10)
+            self.get_logger().info('Subscribed /data_logger/logging_active (auto capture control)')
+        except Exception as e:
+            self.get_logger().warn(f'Logger state subscribe failed: {e}')
 
         self.get_logger().info("Deformity tracker node started")
+        if self.record_video_auto:
+            self.get_logger().info('record_video_auto=True → start/stop follows data_logger (press s to toggle logger)')
 
     # ---------------- RealSense helpers ----------------
     def _list_devices(self):
@@ -258,6 +289,78 @@ class DeformityTrackerNode(Node):
             'area': area
         }
 
+    # ---------------- Video helpers ----------------
+    def _ensure_capture_dir(self):
+        from pathlib import Path
+        base_root = Path(self.video_dir) if self.video_dir else (Path.cwd() / 'outputs' / 'deformity_frames')
+        base_root.mkdir(parents=True, exist_ok=True)
+        return base_root
+
+    def _start_capture(self):
+        import datetime
+        base = self._ensure_capture_dir()
+        ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        from pathlib import Path
+        path = base / f'{ts}_deformity'
+        if self.capture_mode == 'video':
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*self.video_fourcc)
+                fps = self.video_fps if self.video_fps > 0 else float(self.fps)
+                path.mkdir(parents=True, exist_ok=True)
+                video_path = path / 'capture.avi'
+                writer = cv2.VideoWriter(str(video_path), fourcc, fps, (int(self.width), int(self.height)))
+                if not writer.isOpened():
+                    raise RuntimeError(f'VideoWriter open failed (fourcc={self.video_fourcc})')
+                self._video_writer = writer
+                self._record_dir = path
+                self._frame_counter = 0
+                self._recording = True
+                self.get_logger().info(f"[CAPTURE] video -> {video_path} (fps={fps:.1f}, fourcc={self.video_fourcc})")
+            except Exception as e:
+                self._video_writer = None
+                self.capture_mode = 'frames'
+                self.get_logger().warn(f"[CAPTURE] video mode failed ({e}); falling back to frames")
+        if self.capture_mode == 'frames':
+            path.mkdir(parents=True, exist_ok=True)
+            self._record_dir = path
+            self._frame_counter = 0
+            self._recording = True
+            self.get_logger().info(f"[CAPTURE] frames -> {path} (interval={self.frame_save_interval})")
+
+    def _stop_capture(self):
+        if self._recording and self._record_dir is not None:
+            if self.capture_mode == 'video' and self._video_writer is not None:
+                try:
+                    self._video_writer.release()
+                except Exception:
+                    pass
+                self._video_writer = None
+                self.get_logger().info(f"[CAPTURE] saved video -> {self._record_dir / 'capture.avi'}")
+            else:
+                self.get_logger().info(f"[CAPTURE] saved frames -> {self._record_dir}")
+        else:
+            self.get_logger().info('[CAPTURE] stop (no active recording)')
+        self._record_dir = None
+        self._frame_counter = 0
+        self._recording = False
+
+    def _on_logger_state(self, msg: Bool) -> None:
+        try:
+            active = bool(msg.data)
+        except Exception:
+            active = False
+        self._logger_active = active
+        self.get_logger().info(f"[CAPTURE] logger active = {active}")
+        if not self.record_video_auto:
+            return
+        if active and not self._recording:
+            try:
+                self._start_capture()
+            except Exception as e:
+                self.get_logger().warn(f"[CAPTURE] start failed: {e}")
+        elif (not active) and self._recording:
+            self._stop_capture()
+
     # ---------------- Main loop ----------------
     def spin(self):
         assert self.pipe is not None
@@ -298,12 +401,39 @@ class DeformityTrackerNode(Node):
                     self.pub_eccentricity.publish(Float32(data=float(ecc_val)))
                 except Exception:
                     pass
+                # 이미지/비디오 캡처 저장
+                if self._recording and self._record_dir is not None:
+                    self._frame_counter += 1
+                    if self.capture_mode == 'video':
+                        if self._video_writer is not None:
+                            try:
+                                self._video_writer.write(frame)
+                            except Exception:
+                                pass
+                    else:
+                        if self._frame_counter % self.frame_save_interval == 0:
+                            try:
+                                fname = self._record_dir / f"frame_{self._frame_counter:06d}.png"
+                                ok = cv2.imwrite(str(fname), frame)
+                                if not ok:
+                                    raise RuntimeError('cv2.imwrite returned False')
+                            except Exception as e:
+                                self.get_logger().warn(f"[CAPTURE] frame save failed: {e}")
 
                 self._update_fps()
                 prefix = f"[{color_label}] " if color_label else ""
                 info = f"{prefix}circ:{circ_val:.3f} ecc:{ecc_val:.3f} FPS:{self._fps_val:.1f}"
                 cv2.putText(vis, info, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
                 cv2.putText(vis, info, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+                # 녹화 상태 오버레이 표시
+                try:
+                    if self._recording:
+                        rec_txt = 'REC'
+                        color = (0, 0, 255) if self.capture_mode == 'video' else (0, 200, 255)
+                        cv2.putText(vis, rec_txt, (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 2, cv2.LINE_AA)
+                        cv2.putText(vis, rec_txt, (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1, cv2.LINE_AA)
+                except Exception:
+                    pass
 
                 key = 255
                 if self.enable_cv_window:
@@ -353,10 +483,38 @@ class DeformityTrackerNode(Node):
                                 self.get_logger().info('[CSV] STOP & saved')
                             except Exception:
                                 pass
+                    elif key == ord('v'):
+                        # 캡처 토글 (record_video_auto=True면 logger 활성 구간에서만 허용)
+                        if self.record_video_auto and not self._logger_active:
+                            self.get_logger().info('[CAPTURE] logger inactive; ignoring manual start (record_video_auto=True)')
+                        else:
+                            if not self._recording:
+                                try:
+                                    self._start_capture()
+                                except Exception as e:
+                                    self.get_logger().warn(f"[CAPTURE] start failed: {e}")
+                            else:
+                                self._stop_capture()
+                    elif key == ord('p'):
+                        # 현재 프레임 스냅샷 저장
+                        try:
+                            base = self._ensure_capture_dir()
+                            import datetime
+                            ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+                            img_path = os.path.join(str(base), f'{ts}_snap.png')
+                            cv2.imwrite(img_path, frame)
+                            self.get_logger().info(f"[SNAP] saved -> {img_path}")
+                        except Exception as e:
+                            self.get_logger().warn(f"[SNAP] save failed: {e}")
         finally:
             try:
                 if self.pipe is not None:
                     self.pipe.stop()
+            except Exception:
+                pass
+            # 캡처 자원 정리
+            try:
+                self._stop_capture()
             except Exception:
                 pass
             try:

@@ -52,7 +52,7 @@ class DataLoggerNode(Node):
         super().__init__('data_logger_node')
 
         # Parameters
-        self.declare_parameter('rate_hz', 100.0)
+        self.declare_parameter('rate_hz', 200.0)
         self.declare_parameter('csv_dir', '')
         self.declare_parameter('ee_pose_topic', '/ee_pose')
         # 추가: 양손가락 EE 토픽 (MF/TH) 병행 구독 지원
@@ -64,7 +64,7 @@ class DataLoggerNode(Node):
         # EMG 저장 간격 (N행마다 한 번 기록)
         self.declare_parameter('emg_log_every_n', 1)
         # EMG 기록 모드: 'hold'(마지막 값 유지) | 'blank'(업데이트 없으면 공란) — 기본을 'blank'로 설정
-        self.declare_parameter('emg_write_mode', 'blank')
+        self.declare_parameter('emg_write_mode', 'hold')
         # EMG 경고 지연시간(초). 초기 연결 지연으로 인한 오경고를 줄이기 위해 기본 2.0초 대기
         self.declare_parameter('emg_warn_after_sec', 2.0)
         # CSV flush 주기(틱). 1이면 매 행 flush, 10이면 10행마다 flush -> I/O 부하 감소로 콜백 스타베이션 방지

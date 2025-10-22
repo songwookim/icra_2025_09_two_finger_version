@@ -70,7 +70,7 @@ class RobotControllerNode(Node):
         self.declare_parameter('log_hand_csv_enable', True)
         self.declare_parameter('log_hand_csv_path', '')
         # initial_val_default = [1240, 2187, 2103, 1240, 2187, 2103, 1240, 2187, 2103]
-        initial_val_default = [1154, 2019, 1940, 1043, 2101, 1803, 1138, 2048, 1801]
+        initial_val_default = [1154, 2019, 1940, 1000, 1960, 1960, 1138, 2048, 1801]
         self.declare_parameter('initial_val', initial_val_default)
         
 

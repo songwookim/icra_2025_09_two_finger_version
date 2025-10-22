@@ -55,6 +55,7 @@ else:
 # HSV 색범위 프리셋 (기존과 동일)
 COLOR_RANGES = {
     'yellow': [(np.array([20, 100, 100], np.uint8), np.array([35, 255, 255], np.uint8))],
+    'green':  [(np.array([40, 60, 60],  np.uint8), np.array([85, 255, 255], np.uint8))],
     'blue':   [(np.array([90, 100, 60],  np.uint8), np.array([130, 255, 255], np.uint8))],
     'red':    [
         (np.array([0, 120, 70],  np.uint8), np.array([10, 255, 255], np.uint8)),
@@ -62,7 +63,10 @@ COLOR_RANGES = {
     ],
 }
 ACTIVE_COLORS = {
-    'red'
+    'red',
+    'green',
+    'blue',
+    'yellow',
 }
 
 class DeformityTrackerNode(Node):
@@ -390,7 +394,6 @@ class DeformityTrackerNode(Node):
                                 best_name = name
                         color_label = best_name
                         if best['center'] is not None and best['radius'] >= 10.0:
-                            cv2.circle(vis, (int(best['center'][0]), int(best['center'][1])), int(best['radius']), (0, 255, 0), 2)
                             cv2.circle(vis, best['center'], 5, (0, 0, 255), -1)
                         # If ellipse data (a,b) present, draw approximate ellipse outline (use minEnclosingCircle already for circle) - optional
                         # Could extend: cv2.ellipse(...)

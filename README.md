@@ -86,4 +86,13 @@ ros2 launch hri_falcon_robot_bridge bridge.launch.py \
 - Switch to real hardware by setting `use_mock:=False` and providing device-specific controllers.
 - `falcon_node` applies forces only from `/force_sensor/wrench_array` (legacy `/wrench` is subscribed but ignored).
 - Initial posture PD runs after homing; disable via `init_posture_enable:=false` if undesired.
+
 # icra_2025_09_two_finger_version
+
+```
+cat /sys/bus/usb-serial/devices/ttyUSB0/latency_timer 
+sudo vi /sys/bus/usb-serial/devices/ttyUSB0/latency_timer
+   # change to 16 -> 1
+
+ros2 run dclaw dclaw_real
+```

@@ -15,3 +15,19 @@ colcon build --packages-select hri_falcon_robot_bridge && source install/setup.b
 - `6. emg_node` — Myo EMG 8채널 스트리머를 플롯 없이 실행.
 - `7. data_logger` — 힘·EMG·EE 포즈 동기화 CSV 로거를 100 Hz로 실행.
 - `8. plot_result_csv` — 동기화 CSV를 빠르게 시각화하는 플롯 스크립트 실행.
+
+## 참고 자료 (videos / images)
+<figure>
+	<figcaption>전체 워크플로우 (run_all_programs.mp4)</figcaption>
+	<video src="files/run_all_programs.mp4" controls muted playsinline width="480"></video>
+</figure>
+
+<figure>
+	<figcaption>실사용 데모 (real_world_robot.mp4)</figcaption>
+	<video src="files/real_world_robot.mp4" controls muted playsinline width="480"></video>
+</figure>
+
+<figure>
+	<figcaption>시스템 아키텍처</figcaption>
+	<img src="files/system_architecture.png" alt="Falcon ↔ Force Sensor ↔ Dynamixel 데이터 흐름" width="640" />
+</figure>

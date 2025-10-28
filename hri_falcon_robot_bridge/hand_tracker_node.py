@@ -658,9 +658,11 @@ class HandTrackerNode(Node):
                         js.header.stamp = self.get_clock().now().to_msg()
                         js.name = names
                         js.position = positions
-                        if self.log_joint_state:
+                        if True:
                             # 주기적인 대량 로그를 피하기 위해 옵션으로만 출력
                             self.get_logger().info(f"publis6h positions len={len(js.position)}")
+                        self.get_logger().info(f'{js.name}\n')
+                            
                         self.joint_pub.publish(js)
                     # Publish 9-joint targets in units (0..4096) and drive MuJoCo if enabled
                     try:
@@ -707,6 +709,7 @@ class HandTrackerNode(Node):
                             out_units.append(int(round(units_f)))
                         msg = Int32MultiArray()
                         msg.data = out_units
+                        # print(msg)
                         if self.units_publish_enabled:
                             self.units_pub.publish(msg)
                         else:
@@ -862,6 +865,7 @@ class HandTrackerNode(Node):
                         js.header.stamp = self.get_clock().now().to_msg()
                         js.name = names
                         js.position = positions
+                        
                         self.joint_pub.publish(js)
                     # Optional: write empty row for time continuity
                     if self.log_angles_csv_enable and self._csv_writer:
@@ -876,7 +880,6 @@ class HandTrackerNode(Node):
                                 self._csv_fp.flush()
                         except Exception as e:
                             self.get_logger().warn(f"CSV 로그 실패(손 없음): {e}")
-
                 # ---- Overlay: units_publish_enabled 상태 표시 (항상 표시) ----
                 try:
                     # Units publish status

@@ -19,15 +19,15 @@ colcon build --packages-select hri_falcon_robot_bridge && source install/setup.b
 ## 참고 자료 (videos / images)
 <figure>
 	<figcaption>전체 워크플로우 (run_all_programs.mp4)</figcaption>
-	<video src="files/run_all_programs.mp4" controls muted playsinline width="480"></video>
+	<video src="readme_files/run_all_programs.mp4" controls muted playsinline width="480"></video>
 </figure>
 
 <figure>
 	<figcaption>실사용 데모 (real_world_robot.mp4)</figcaption>
-	<video src="files/real_world_robot.mp4" controls muted playsinline width="480"></video>
+	<video src="readme_files/real_world_robot.mp4" controls muted playsinline width="480"></video>
 </figure>
 
 <figure>
 	<figcaption>시스템 아키텍처</figcaption>
-	<img src="files/system_architecture.png" alt="Falcon ↔ Force Sensor ↔ Dynamixel 데이터 흐름" width="640" />
+	<img src="readme_files/system_architecture.png" alt="Falcon ↔ Force Sensor ↔ Dynamixel 데이터 흐름" width="640" />
 </figure>

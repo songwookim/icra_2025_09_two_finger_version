@@ -19,13 +19,11 @@ colcon build --packages-select hri_falcon_robot_bridge && source install/setup.b
 ## 참고 자료 (videos / images)
 <figure>
 	<figcaption>전체 워크플로우 (run_all_programs.mp4)</figcaption>
-	<video src="readme_files/run_all_programs.mp4" controls muted playsinline width="480"></video>
-</figure>
+	<!-- GitHub README does not reliably render inline <video> tags. Use a clickable thumbnail or link to play the MP4 on GitHub. -->
 
-<figure>
-	<figcaption>실사용 데모 (real_world_robot.mp4)</figcaption>
-	<video src="readme_files/real_world_robot.mp4" controls muted playsinline width="480"></video>
-</figure>
+[![전체 워크플로우 (run_all_programs.mp4)](readme_files/system_architecture.png)](readme_files/run_all_programs.mp4)
+
+[![실사용 데모 (real_world_robot.mp4)](readme_files/system_architecture.png)](readme_files/real_world_robot.mp4)
 
 <figure>
 	<figcaption>시스템 아키텍처</figcaption>

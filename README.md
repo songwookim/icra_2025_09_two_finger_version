@@ -19,11 +19,17 @@ colcon build --packages-select hri_falcon_robot_bridge && source install/setup.b
 ## 참고 자료 (videos / images)
 <figure>
 	<figcaption>전체 워크플로우 (run_all_programs.mp4)</figcaption>
-	<!-- GitHub README does not reliably render inline <video> tags. Use a clickable thumbnail or link to play the MP4 on GitHub. -->
 
-[![전체 워크플로우 (run_all_programs.mp4)](readme_files/system_architecture.png)](readme_files/run_all_programs.mp4)
+![전체 워크플로우 (run_all_programs.mp4)](https://github.com/songwookim/icra_2025_09_two_finger_version/assets/60430516/507169674-43df6547-e6d0-461a-83b5-1941b37cc7fa.mp4)
 
-[![실사용 데모 (real_world_robot.mp4)](readme_files/system_architecture.png)](readme_files/real_world_robot.mp4)
+</figure>
+
+<figure>
+	<figcaption>실사용 데모 (real_world_robot.mp4)</figcaption>
+
+![실사용 데모 (real_world_robot.mp4)](https://github.com/songwookim/icra_2025_09_two_finger_version/assets/60430516/507170254-992dd69d-993f-4229-9640-c16b96fcf0a4.mp4)
+
+</figure>
 
 <figure>
 	<figcaption>시스템 아키텍처</figcaption>

@@ -65,6 +65,7 @@ install(PROGRAMS
   hri_falcon_robot_bridge/robot_controller_node.py
   hri_falcon_robot_bridge/deformity_tracker_node.py
   hri_falcon_robot_bridge/data_logger_node.py
+  hri_falcon_robot_bridge/data_logger_hdf5_node.py
   hri_falcon_robot_bridge/emg_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -95,6 +96,13 @@ install(PROGRAMS
   hri_falcon_robot_bridge/data_logger_node.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME data_logger_node
+)
+
+# Optional: alias for data_logger_hdf5_node without .py
+install(PROGRAMS
+  hri_falcon_robot_bridge/data_logger_hdf5_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME data_logger_hdf5_node
 )
 
 # Optional: alias for emg_node without .py

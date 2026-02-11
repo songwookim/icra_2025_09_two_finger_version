@@ -1,0 +1,21 @@
+flowchart TD
+    subgraph Pipeline["Learning Pipeline"]
+        A["1. Data Collection\ndata_logger_node → CSV"] --> B["2. Data Processing\nprocess_demonstrations.py"]
+        B --> C["3. Stiffness Estimation\nestimate_stiffness_fixed.py"]
+        C --> D["4. Model Training\nrun_stiffness_policy_benchmarks.py"]
+        D --> E["5. Evaluation\nevaluate_stiffness_policy.py"]
+    end
+
+    subgraph Models["Supported Models"]
+        D --> M1["GMM / GMR"]
+        D --> M2["Behavior Cloning"]
+        D --> M3["Implicit BC"]
+        D --> M4["Diffusion Policy"]
+        D --> M5["LSTM-GMM"]
+    end
+
+    subgraph Aug["Data Augmentation"]
+        B --> F["DexMimicGen\nAugmentation"]
+        F --> G["HDF5 Dataset"]
+        G --> H["Diffusion Policy\nFull Pipeline"]
+    end

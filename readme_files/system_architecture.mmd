@@ -1,0 +1,37 @@
+flowchart LR
+    subgraph Sensors["Sensors"]
+        FS["MMS101\nForce Sensor"]
+        RS["RealSense\nCamera"]
+        MYO["Myo\nArmband"]
+    end
+
+    subgraph ROS2["ROS 2 Humble Nodes"]
+        FSN["force_sensor_node\n(Python)"]
+        FN["falcon_node\n(C++)"]
+        HT["hand_tracker_node\n(Python)"]
+        RC["robot_controller_node\n(Python)"]
+        DT["deformity_tracker_node\n(Python)"]
+        EMG["emg_node\n(Python)"]
+        DL["data_logger_node\n(Python)"]
+    end
+
+    subgraph Actuators["Actuators"]
+        FAL["Novint Falcon\nHaptic Device"]
+        DXL["Dynamixel\nMotors"]
+    end
+
+    FS --> FSN
+    FSN -->|"/force_sensor/wrench_array"| FN
+    FN -->|"libnifalcon"| FAL
+
+    RS --> HT
+    RS --> DT
+    MYO --> EMG
+
+    HT -->|"/hand_tracker/targets_units"| RC
+    RC -->|"Dynamixel SDK"| DXL
+
+    FSN -->|"/force_sensor/s_i/wrench"| DL
+    DT -->|"/deformity_tracker/*"| DL
+    EMG -->|"/emg/raw"| DL
+    HT -->|"/hand_tracker/ee_pose"| DL

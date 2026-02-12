@@ -1,6 +1,8 @@
 # hri_falcon_robot_bridge
 
-Two-finger haptic teleoperation 시스템을 위한 ROS 2 Humble 패키지.
+**Two-Finger Haptic Teleoperation & Stiffness Policy Learning**
+
+ROS 2 Humble 기반의 two-finger 햅틱 텔레오퍼레이션 시스템.
 Force sensor → Falcon haptic feedback, Hand tracking → Dynamixel 제어, EMG 수집, 동기화 로깅, 임피던스 모방학습까지의 전체 파이프라인을 포함합니다.
 
 ---
@@ -34,61 +36,101 @@ https://github.com/user-attachments/assets/992dd69d-993f-4229-9640-c16b96fcf0a4
 
 ```mermaid
 flowchart LR
-    subgraph Sensors
-        FS["MMS101 Force Sensor"]
-        RS["RealSense Camera"]
-        MYO["Myo Armband"]
+    subgraph Sensors["Sensors"]
+        FS["MMS101<br/>Force Sensor"]
+        RS["RealSense<br/>Camera"]
+        MYO["Myo<br/>Armband"]
     end
+
     subgraph Nodes["ROS 2 Nodes"]
-        FSN["force_sensor_node"]
-        FN["falcon_node C++"]
-        HT["hand_tracker_node"]
-        RC["robot_controller_node"]
-        DT["deformity_tracker_node"]
-        EMG["emg_node"]
-        DL["data_logger_node"]
+        FSN["force_sensor_node<br/>(Python)"]
+        FN["falcon_node<br/>(C++)"]
+        HT["hand_tracker_node<br/>(Python)"]
+        RC["robot_controller_node<br/>(Python)"]
+        DT["deformity_tracker_node<br/>(Python)"]
+        EMG["emg_node<br/>(Python)"]
+        DL["data_logger_node<br/>(Python)"]
     end
-    subgraph Actuators
+
+    subgraph Actuators["Actuators"]
         FAL["Novint Falcon"]
         DXL["Dynamixel"]
     end
 
-    FS --> FSN -->|wrench_array| FN --> FAL
-    RS --> HT -->|targets_units| RC --> DXL
-    RS --> DT -->|circularity, eccentricity| DL
-    MYO --> EMG -->|emg/raw| DL
-    FSN -->|wrench| DL
-    HT -->|ee_pose| DL
+    %% Sensor → Node
+    FS --> FSN
+    RS --> HT
+    RS --> DT
+    MYO --> EMG
+
+    %% Force feedback path
+    FSN -->|"/force_sensor/wrench_array<br/>Float64MultiArray"| FN
+    FN -->|libnifalcon| FAL
+
+    %% Hand tracking → Robot control path
+    HT -->|"/hand_tracker/targets_units<br/>Int32MultiArray(9)"| RC
+    RC -->|Dynamixel SDK| DXL
+
+    %% hand_tracker additional pubs
+    HT -->|"/hand_tracker/key<br/>String"| DL
+    HT -->|"/ee_pose, /ee_pose_mf, /ee_pose_th<br/>PoseStamped"| DL
+
+    %% Sensor data → Data logger
+    FSN -->|"/force_sensor/s{1,2,3}/wrench<br/>WrenchStamped"| DL
+    DT -->|"/deformity_tracker/eccentricity<br/>Float32"| DL
+    DT -->|"/deformity_tracker/circularity<br/>Float32"| DL
+    EMG -->|"/emg/raw<br/>Float32MultiArray(8)"| DL
+
+    %% Bidirectional state
+    DL -->|"/data_logger/logging_active<br/>Bool"| HT
+    DL -->|"/data_logger/logging_active<br/>Bool"| DT
 ```
 
 ---
 
-## Nodes
+## ROS 2 Nodes
 
-| Node | Lang | 역할 |
-|------|------|------|
-| `force_sensor_node` | Python | MMS101 힘 센서 → wrench 퍼블리시 |
-| `falcon_node` | C++ | wrench 수신 → Falcon 힘 피드백 (libnifalcon) |
-| `hand_tracker_node` | Python | RealSense + MediaPipe 손 추적 → 관절 타겟 |
-| `robot_controller_node` | Python | 관절 타겟 → Dynamixel 모터 제어 |
-| `deformity_tracker_node` | Python | RealSense + HSV → 변형 지표 |
-| `emg_node` | Python | Myo armband → 8ch EMG 스트리밍 |
-| `data_logger_node` | Python | 전 센서 동기화 CSV 로깅 (s 키로 토글) |
+### Node-Topic 상세
+
+| Node | Pub Topics | Sub Topics |
+|------|-----------|------------|
+| **force_sensor_node** (Python) | `/force_sensor/wrench_array` (Float64MultiArray)<br/>`/force_sensor/s{1,2,3}/wrench` (WrenchStamped) | — |
+| **falcon_node** (C++) | — | `/force_sensor/wrench_array` (Float64MultiArray) |
+| **hand_tracker_node** (Python) | `/hand_tracker/targets_units` (Int32MultiArray)<br/>`/hand_tracker/joint_states` (JointState)<br/>`/hand_tracker/key` (String)<br/>`/ee_pose` `/ee_pose_mf` `/ee_pose_th` (PoseStamped) | `/data_logger/logging_active` (Bool) |
+| **robot_controller_node** (Python) | — | `/hand_tracker/targets_units` (Int32MultiArray) |
+| **deformity_tracker_node** (Python) | `/deformity_tracker/circularity` (Float32)<br/>`/deformity_tracker/eccentricity` (Float32) | `/data_logger/logging_active` (Bool) |
+| **emg_node** (Python) | `/emg/raw` (Float32MultiArray)<br/>`/hand_tracker/key` (String) | — |
+| **data_logger_node** (Python) | `/data_logger/logging_active` (Bool) | `/force_sensor/s2/wrench`, `/force_sensor/s3/wrench` (WrenchStamped)<br/>`/deformity_tracker/circularity`, `/eccentricity` (Float32)<br/>`/emg/raw` (Float32MultiArray)<br/>`/ee_pose`, `/ee_pose_mf`, `/ee_pose_th` (PoseStamped)<br/>`/hand_tracker/key` (String) |
+
+### data_logger_node 저장 데이터
+
+| 그룹 | CSV 컬럼 |
+|------|----------|
+| Force Sensor (s2, s3) | `s2_fx`, `s2_fy`, `s2_fz`, `s2_tx`, `s2_ty`, `s2_tz`, `s3_fx` ... `s3_tz` |
+| EE Pose (IF, MF, TH) | `ee_if_px`, `ee_if_py`, `ee_if_pz`, `ee_mf_px` ... `ee_th_pz` |
+| Deformity | `deform_circ`, `deform_ecc` |
+| EMG (8ch) | `emg_ch1` ~ `emg_ch8` |
+| Timestamp | `t_sec`, `t_nanosec` |
+
+> 로깅 ON/OFF: 키보드 `s` 키 토글 (`/hand_tracker/key`). CSV 저장 경로: `outputs/logs/YYYYMMDD/`
 
 ---
 
 ## Topics
 
 ```
-/force_sensor/wrench_array      Float64MultiArray  (num_sensors x 6)
-/force_sensor/s{i}/wrench       WrenchStamped
-/hand_tracker/targets_units     Int32MultiArray    (9)
-/hand_tracker/joint_states      JointState
-/hand_tracker/key               String             (s = 로깅 토글)
-/deformity_tracker/circularity  Float32
-/deformity_tracker/eccentricity Float32
-/emg/raw                        Float32MultiArray  (8ch)
-/data_logger/logging_active     Bool
+/force_sensor/wrench_array       Float64MultiArray   (num_sensors × 6)
+/force_sensor/s{1,2,3}/wrench    WrenchStamped
+/hand_tracker/targets_units      Int32MultiArray     (9)
+/hand_tracker/joint_states       JointState
+/hand_tracker/key                String              ('s' = 로깅 토글)
+/ee_pose                         PoseStamped         (IF finger)
+/ee_pose_mf                      PoseStamped         (MF finger)
+/ee_pose_th                      PoseStamped         (TH finger)
+/deformity_tracker/circularity   Float32
+/deformity_tracker/eccentricity  Float32
+/emg/raw                         Float32MultiArray   (8ch)
+/data_logger/logging_active      Bool
 ```
 
 ---
@@ -112,22 +154,67 @@ flowchart LR
 | `safe_mode` | robot_controller | Dynamixel dry-run |
 | `force_scale` | falcon | N → Falcon 변환 스케일 |
 | `init_posture_enable` | falcon | 시작 시 PD 포스처 |
+| `io_rate_hz` | falcon | 장치 IO 폴링 (default 1000) |
+| `force_process_rate_hz` | falcon | 힘 적용 주기 (default 200) |
 | `enable_plot` | emg | EMG 실시간 플롯 |
 | `rate_hz` | data_logger | 로깅 주기 (default 100) |
 | `csv_dir` | data_logger | CSV 저장 경로 |
+| `ee_pose_topic` | hand_tracker / data_logger | EE pose 토픽 (default `/ee_pose`) |
 
 ---
 
-## Learning Pipeline
+## Installation
+
+### Prerequisites
+
+- Ubuntu 22.04
+- ROS 2 Humble
+- Python 3.10+
+
+### Build
+
+```bash
+cd ~/ros2_ws/src
+git clone https://github.com/songwookim/icra_2025_09_two_finger_version.git hri_falcon_robot_bridge
+
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select hri_falcon_robot_bridge
+source install/setup.bash
+```
+
+---
+
+## Pipeline Overview
+
+### 전체 파이프라인
 
 ```mermaid
 flowchart TD
-    A["1. Data Collection - data_logger_node -> CSV"] --> B["2. Processing - process_demonstrations.py"]
-    B --> C["3. Stiffness Estimation - estimate_stiffness_fixed.py"]
-    C --> D["4. Model Training - run_stiffness_policy_benchmarks.py"]
-    D --> E["5. Evaluation - evaluate_stiffness_policy.py"]
+    A["1. Data Collection<br/>data_logger_node → CSV"] --> B["2. Stiffness Profiling<br/>estimate_stiffness_fixed.py"]
+    B --> C["3. Data Processing<br/>process_demonstrations.py"]
+    C --> D["4. Model Training<br/>run_stiffness_policy_benchmarks.py"]
+    D --> E["5. Evaluation<br/>evaluate_stiffness_policy.py"]
     D --> M["GMM | BC | IBC | Diffusion | LSTM-GMM"]
 ```
+
+| 단계 | 스크립트 | 설명 |
+|------|----------|------|
+| **1. Data Collection** | `data_logger_node` | 시연 데이터 CSV 수집 |
+| **2. Stiffness Profiling** | `scripts/estimate_stiffness_fixed.py` | Force 데이터에서 강성 프로파일 추출 |
+| **3. Data Processing** | `scripts/process_demonstrations.py` | 시연 데이터 전처리 |
+| **4. Model Learning** | `scripts/3_model_learning/` | 다양한 모델 학습 |
+| **5. Evaluation** | `scripts/3_model_learning/evaluate_stiffness_policy.py` | 결과 비교 및 시각화 |
+
+### 지원 모델
+
+| Model | Type | 특징 |
+|-------|------|------|
+| **BC** | Behavior Cloning | MLP 기반 회귀, 기본 baseline |
+| **Diffusion Policy** | Generative | DDPM/DDIM 기반 |
+| **LSTM-GMM** | Sequence | 시계열 + GMM 출력 |
+| **IBC** | Energy-based | Implicit Behavior Cloning |
+| **GMR** | Probabilistic | Gaussian Mixture Regression |
 
 ### 모델 학습
 
@@ -139,12 +226,6 @@ python3 scripts/3_model_learning/run_stiffness_policy_benchmarks.py --seed 0 --t
 
 ```bash
 python3 scripts/3_model_learning/evaluate_stiffness_policy.py --models all
-```
-
-### TensorBoard
-
-```bash
-tensorboard --logdir outputs/models/stiffness_policies/tensorboard --port 6006
 ```
 
 모델별 하이퍼파라미터: `configs/stiffness_policy/*.yaml` 참고.
@@ -195,7 +276,27 @@ hri_falcon_robot_bridge/
 
 ---
 
-## VS Code Debug Configs
+## Miscellaneous
+
+### TensorBoard
+
+```bash
+tensorboard --logdir outputs/models/stiffness_policies/tensorboard --port 6006
+```
+
+### USB 레이턴시 최적화 (Dynamixel)
+
+```bash
+sudo sh -c 'echo 1 > /sys/bus/usb-serial/devices/ttyUSB0/latency_timer'
+```
+
+### 프로세스 강제 종료
+
+```bash
+pkill -9 -f "ros2|python3.*hri_falcon"
+```
+
+### VS Code Debug Configs
 
 | # | 이름 | 설명 |
 |---|------|------|
@@ -209,9 +310,7 @@ hri_falcon_robot_bridge/
 | 7 | data_logger | 동기화 CSV (100 Hz) |
 | 8 | plot_result_csv | CSV 시각화 |
 
----
-
-## C++ Build Notes
+### C++ Build Notes
 
 - `CMakeLists.txt`에서 로컬 `libnifalcon` 탐색 → 있으면 실제 장치 모드, 없으면 시뮬레이션
 - RPATH 자동 설정 → `LD_LIBRARY_PATH` export 불필요

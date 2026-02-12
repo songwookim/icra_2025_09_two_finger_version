@@ -63,22 +63,6 @@ flowchart LR
 
 ---
 
-## Quick Start
-
-```bash
-# 빌드
-source /opt/ros/humble/setup.bash
-colcon build --packages-select hri_falcon_robot_bridge
-source install/setup.bash
-
-# 실행
-ros2 launch hri_falcon_robot_bridge bridge.launch.py
-```
-
-VS Code에서는 Task **"colcon: build hri_falcon_robot_bridge (debug)"** 사용.
-
----
-
 ## Nodes
 
 | Node | Lang | 역할 |

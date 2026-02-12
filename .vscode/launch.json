@@ -1,0 +1,210 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "0. Current Python File (.venv)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "AMENT_PREFIX_PATH": "${workspaceFolder}/install:/opt/ros/humble:${env:AMENT_PREFIX_PATH}",
+                "COLCON_PREFIX_PATH": "${workspaceFolder}/install:${env:COLCON_PREFIX_PATH}",
+                "LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:${workspaceFolder}/install/lib:/opt/ros/humble/lib:${env:LD_LIBRARY_PATH}",
+                "PYTHONPATH": "${workspaceFolder}/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:${env:PYTHONPATH}",
+                "ROS_DISTRO": "humble",
+                "PATH": "/opt/ros/humble/bin:${env:PATH}"
+            },
+            "args": [
+                // "--ros-args"
+            ],
+            "preLaunchTask": "colcon: build hri_falcon_robot_bridge (debug)"
+        },
+
+        {
+            "name": "1. hand_tracker",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/hri_falcon_robot_bridge/hri_falcon_robot_bridge/hand_tracker_node.py",
+            "console": "integratedTerminal",
+            "python": "/usr/bin/python3",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "AMENT_PREFIX_PATH": "${workspaceFolder}/install:/opt/ros/humble:${env:AMENT_PREFIX_PATH}",
+                "COLCON_PREFIX_PATH": "${workspaceFolder}/install:${env:COLCON_PREFIX_PATH}",
+                "LD_LIBRARY_PATH": "${workspaceFolder}/install/lib:/opt/ros/humble/lib:${env:LD_LIBRARY_PATH}",
+                "PYTHONPATH": "${workspaceFolder}/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:${env:PYTHONPATH}",
+                "ROS_DISTRO": "humble",
+                "ENABLE_CV_WINDOW": "1"
+            },
+            "preLaunchTask": "colcon: build hri_falcon_robot_bridge (debug)",
+            "args": [
+                "--ros-args"
+            ]
+        },
+        {
+            "name": "2. force_sensor",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/hri_falcon_robot_bridge/hri_falcon_robot_bridge/force_sensor_node.py",
+            "console": "integratedTerminal",
+            "python": "/usr/bin/python3",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "AMENT_PREFIX_PATH": "${workspaceFolder}/install:/opt/ros/humble:${env:AMENT_PREFIX_PATH}",
+                "COLCON_PREFIX_PATH": "${workspaceFolder}/install:${env:COLCON_PREFIX_PATH}",
+                "LD_LIBRARY_PATH": "${workspaceFolder}/install/lib:/opt/ros/humble/lib:${env:LD_LIBRARY_PATH}",
+                "PYTHONPATH": "${workspaceFolder}/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:${env:PYTHONPATH}",
+                "ROS_DISTRO": "humble",
+                "ENABLE_CV_WINDOW": "1"
+            },
+            "preLaunchTask": "colcon: build hri_falcon_robot_bridge (debug)",
+            "args": [
+                "--ros-args",
+                "-p", "use_mock:=false"
+            ]
+        },
+        {
+            "name": "3. dclaw",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/hri_falcon_robot_bridge/hri_falcon_robot_bridge/robot_controller_node.py",
+            "console": "integratedTerminal",
+            "python": "/usr/bin/python3",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "AMENT_PREFIX_PATH": "${workspaceFolder}/install:/opt/ros/humble:${env:AMENT_PREFIX_PATH}",
+                "COLCON_PREFIX_PATH": "${workspaceFolder}/install:${env:COLCON_PREFIX_PATH}",
+                "LD_LIBRARY_PATH": "${workspaceFolder}/install/lib:/opt/ros/humble/lib:${env:LD_LIBRARY_PATH}",
+                "PYTHONPATH": "${workspaceFolder}/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:${env:PYTHONPATH}",
+                "ROS_DISTRO": "humble"
+            },
+            "preLaunchTask": "colcon: build hri_falcon_robot_bridge (debug)",
+            "args": [
+                "--ros-args",
+                "-p", "safe_mode:=false"
+            ]
+        },
+        {
+            "name": "4. falcon",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/install/hri_falcon_robot_bridge/lib/hri_falcon_robot_bridge/falcon_node",
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "AMENT_PREFIX_PATH", "value": "${workspaceFolder}/install:/opt/ros/humble:${env:AMENT_PREFIX_PATH}" },
+                { "name": "COLCON_PREFIX_PATH", "value": "${workspaceFolder}/install:${env:COLCON_PREFIX_PATH}" },
+                { "name": "LD_LIBRARY_PATH", "value": "${workspaceFolder}/install/lib:${workspaceFolder}/install/hri_falcon_robot_bridge/lib:/opt/ros/humble/lib:${env:LD_LIBRARY_PATH}" },
+                { "name": "PATH", "value": "/opt/ros/humble/bin:${env:PATH}" },
+                { "name": "ROS_DISTRO", "value": "humble" }
+            ],
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "setupCommands": [
+                { "description": "Enable pretty-printing for gdb", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ],
+            "preLaunchTask": "colcon: build hri_falcon_robot_bridge",
+            "args": [
+                "--ros-args",
+                "-p", "safe_mode:=False",
+                "-p", "force_scale:=550.",
+                "-p", "init_force_limit_:=4000"
+            ]
+
+        },
+        {
+            "name": "5. deformity_tracker",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/hri_falcon_robot_bridge/hri_falcon_robot_bridge/deformity_tracker_node.py",
+            "console": "integratedTerminal",
+            "python": "/usr/bin/python3",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "AMENT_PREFIX_PATH": "${workspaceFolder}/install:/opt/ros/humble:${env:AMENT_PREFIX_PATH}",
+                "COLCON_PREFIX_PATH": "${workspaceFolder}/install:${env:COLCON_PREFIX_PATH}",
+                "LD_LIBRARY_PATH": "${workspaceFolder}/install/lib:/opt/ros/humble/lib:${env:LD_LIBRARY_PATH}",
+                "PYTHONPATH": "${workspaceFolder}/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:${env:PYTHONPATH}",
+                "ROS_DISTRO": "humble",
+                "ENABLE_CV_WINDOW": "1"
+            },
+            "preLaunchTask": "colcon: build hri_falcon_robot_bridge (debug)",
+            "args": [
+                "--ros-args"
+                // "-p", "serial_number:=<YOUR_RS_SERIAL>",
+                // "-p", "device_index:=1",
+                // "-p", "width:=640", "-p", "height:=480", "-p", "fps:=30"
+            ]
+        },
+        {
+            "name": "6. emg_node",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/hri_falcon_robot_bridge/hri_falcon_robot_bridge/emg_node.py",
+            "console": "integratedTerminal",
+            "python": "/usr/bin/python3",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "AMENT_PREFIX_PATH": "${workspaceFolder}/install:/opt/ros/humble:${env:AMENT_PREFIX_PATH}",
+                "COLCON_PREFIX_PATH": "${workspaceFolder}/install:${env:COLCON_PREFIX_PATH}",
+                "LD_LIBRARY_PATH": "${workspaceFolder}/install/lib:/opt/ros/humble/lib:${env:LD_LIBRARY_PATH}",
+                "PYTHONPATH": "${workspaceFolder}/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:${env:PYTHONPATH}",
+                "ROS_DISTRO": "humble",
+                "ENABLE_CV_WINDOW": "1"
+            },
+            "preLaunchTask": "colcon: build hri_falcon_robot_bridge (debug)",
+            "args": [
+                "--ros-args",
+                // "-p", "enable_plot:=true",
+                "-p", "plot_mode:=on",
+                // "-p", "plot_mode:=auto",
+                // "-p", "plot_backend:=Qt5Agg"
+                // "-p", "plot_animation_interval_ms:=10"
+            ]
+        },
+        {
+            "name": "7. data_logger",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/hri_falcon_robot_bridge/hri_falcon_robot_bridge/data_logger_node.py",
+            "console": "integratedTerminal",
+            "python": "/usr/bin/python3",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "AMENT_PREFIX_PATH": "${workspaceFolder}/install:/opt/ros/humble:${env:AMENT_PREFIX_PATH}",
+                "COLCON_PREFIX_PATH": "${workspaceFolder}/install:${env:COLCON_PREFIX_PATH}",
+                "LD_LIBRARY_PATH": "${workspaceFolder}/install/lib:/opt/ros/humble/lib:${env:LD_LIBRARY_PATH}",
+                "PYTHONPATH": "${workspaceFolder}/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:${env:PYTHONPATH}",
+                "ROS_DISTRO": "humble"
+            },
+            "preLaunchTask": "colcon: build hri_falcon_robot_bridge (debug)",
+            "args": [
+                "--ros-args",
+                "-p", "rate_hz:=200.0",
+                "-p", "ee_pose_topic:=/ee_pose"
+            ]
+        },
+        {
+            "name": "8. plot_result_csv",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/plot_synced_csv.py",
+            "console": "integratedTerminal",
+            "python": "/usr/bin/python3",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "args": [
+                // 예시: 특정 센서/축 지정 또는 저장
+                // "--ros-args",
+                // "--sensors", "12,3",
+                // "--axes", "fx,fy,fz",
+                // "--save", "${workspaceFolder}/outputs/force/plot.png"
+            ]
+        }
+
+    ],
+    "compounds": []
+}

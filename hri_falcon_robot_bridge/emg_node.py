@@ -57,7 +57,7 @@ class EMGNode(Node):
     def __init__(self):
         super().__init__('emg_node')
         # Parameters
-        self.declare_parameter('publish_rate_hz', 100.0)
+        self.declare_parameter('publish_rate_hz', 200.0)
         self.declare_parameter('enable_plot', False)  # 기본 비활성화 (Gdk 경고 회피)
         # 문자열/불리언 모두 허용 (동적 타이핑)
         self.declare_parameter('plot_mode', 'off', ParameterDescriptor(dynamic_typing=True))  # 'on','off','auto' 또는 bool

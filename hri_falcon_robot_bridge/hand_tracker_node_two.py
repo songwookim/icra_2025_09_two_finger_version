@@ -214,7 +214,6 @@ class HandTrackerNode(Node):
         self.declare_parameter('run_mujoco', True)
         # 기본 경로: 사용자가 제공한 DClaw XML 경로를 기본값으로 설정
         self.declare_parameter('mujoco_model_path', '/home/songwoo/Desktop/work_dir/realsense_hand_retargetting/universal_robots_ur5e_with_dclaw/dclaw_two_finger/dclaw3xh.xml')
-        # self.declare_parameter('mujoco_model_path', '/home/songwoo/git/ur_dclaw/dclaw_finger_description/urdf/dclaw_finger_mjcf_merged.cleaned.xml')
         # Optional EE pose topic (to display or log end-effector pose)
         # 기본 동작: /ee_pose 로 계속 퍼블리시
         self.declare_parameter('ee_pose_topic', '/ee_pose')

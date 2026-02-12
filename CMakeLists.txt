@@ -59,7 +59,6 @@ ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
   hri_falcon_robot_bridge/force_sensor_node.py
-  hri_falcon_robot_bridge/haptic_robot_controller.py
   hri_falcon_robot_bridge/continuous_force_test_node.py
   hri_falcon_robot_bridge/hand_tracker_node.py
   hri_falcon_robot_bridge/robot_controller_node.py

@@ -26,13 +26,6 @@ try:
     from mms101_controller import MMS101Controller  # original controller
 except Exception:
     MMS101Controller = None  # type: ignore
-    
-
-try:
-    from mms101_controller_temp import MMS101Controller as TempMMS101Controller  # temp EMA controller
-except Exception:
-    TempMMS101Controller = None  # type: ignore
-
 
 class ForceSensorNode(Node):
     def __init__(self) -> None:
